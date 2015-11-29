@@ -34,7 +34,7 @@ class ReputationService(object):
         except Exception:
             success = False
             longitude, latitude = [0,0]
-        return (success, longitude, latitude)
+        return (success, latitude, longitude)
 
     def links_crawler(self, keywords):
         qs = {"q": keywords}
@@ -72,23 +72,44 @@ class ReputationService(object):
             result.update({name:links})
         return result
 
-    def blog_crawler_by_title(self, hospital_link_data):
+    def blog_crawler(self, hospital_link_data):
         result = {}
         for k, v in hospital_link_data.iteritems():
+            data = []
             if len(v):
                 data = map(self.get_blog_title, v)
-                data = "".join(data)
-            else:
-                data = ""
-            
+                data.extend(map(self.get_blog_content, v))
             if not result.has_key(k):
                 result.update({k:data})
-
-#            fname = "./data/"+ k + ".txt"
-#            with open(fname, 'wb+') as f:
-#                f.write(data+"\n")
-
         return result
+
+    def get_blog_content(self, blog_data):
+        blog_category = blog_data[0]
+        link = blog_data[1]
+
+        r = requests.get(link)
+        if r.encoding == 'ISO-8859-1': 
+            r.encoding = 'utf-8'
+        htext = r.text
+
+        soup = BeautifulSoup(htext)
+        if blog_category == "yam":
+            search = soup.findAll('div', attrs={'class': 'post_content'})
+        elif blog_category == "pixnet":
+            search = soup.findAll('div', attrs={'class': 'article-content-inner'})
+        elif blog_category == "xuite":
+            search = soup.findAll('div', attrs={'itemprop': 'articleBody'})
+        elif blog_category == "blogspot":
+            search = soup.findAll('div', attrs={'class': 'post-body entry-content'})
+        elif blog_category == "ptt":
+            search = soup.findAll('div', attrs={'id': 'main-content'})
+        else:
+            print "NO MATACH CATEGORY:", blog_category
+            search = []
+
+        blog_data = [re.sub("<.*?>", "", str(k)) for k in search]
+        blog_data = "".join(blog_data)   
+        return blog_data     
 
     def get_blog_title(self, blog_data):
         blog_category = blog_data[0]
@@ -106,14 +127,21 @@ class ReputationService(object):
         blog_data = "".join(blog_data)   
         return blog_data
     
-    def calculate_reputation_score(self, text):
+    def calculate_reputation_score(self, text_list):
         keyword_ptn = [re.compile(key) for key in self.__reputation_keywords.keys()]
-        reputations = map(lambda ptn: len(re.findall(ptn, text)), keyword_ptn)
-        indices = [i for i, x in enumerate(reputations) if x > 0]
-        ky = map(lambda id: self.__reputation_keywords.keys()[id], indices)
-        scores = map(lambda key: self.__reputation_keywords[key], ky)
-        score = sum(scores)
-        return score
+        result = {"like":0, "dislike":0}
+       
+        for text in text_list:
+            match = map(lambda ptn: len(re.findall(ptn, text)), keyword_ptn)
+            ids = [i for i, x in enumerate(match) if x > 0]
+            ky = map(lambda id: self.__reputation_keywords.keys()[id], ids)
+            scores = map(lambda key: self.__reputation_keywords[key], ky)
+            score = sum(scores)
+            if score > 0:
+                result["like"] += 1
+            elif score < 0:
+                result["dislike"] += 1
+        return result
 
     def get_reputation(self, hospitals, blog_text_data):
         reputation = {k:(v, self.calculate_reputation_score(blog_text_data[k])) for k, v in hospitals.iteritems()}
@@ -123,7 +151,7 @@ if __name__ == '__main__':
     ahr = ReputationService("./animals.json")
     hos = ahr.get_animal_hospitals()
     links = ahr.get_hospital_links(hos.keys()) # name: ((success, longitude, latitude),score)
-    data = ahr.blog_crawler_by_title(links)
+    data = ahr.blog_crawler(links)
     rep = ahr.get_reputation(hos, data)
 
     for k, v in rep.iteritems():
